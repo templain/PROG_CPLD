@@ -88,29 +88,34 @@ int reset_tap(FT_HANDLE ftHandle, int *current_state, int mode);
 // transit state
 int transit(FT_HANDLE ftHandle, int *current, int next, int mode);
 
-// output bit data 
+// output bit data
 int outBit(FT_HANDLE ftHandle, int tms, int tdi, int tdo, int mask, int flush, int *no_match, int mode);
 
 // output data
 int outData(FT_HANDLE ftHandle, int bitw, char *tdi, char *smask, char *tdo, char *mask, int *no_match, int mode);
 
-// get state from state name 
+// get state from state name
 int state_of_string(char *n, int *s);
 
 // parse SVF file
 int parse_svf(FILE *fp, FT_HANDLE ftHandle, int v, int *current_state, int *no_match, int mode);
 
-// ========== functions ========== 
+// ========== functions ==========
 // examine whether ch is blank character or not
 int is_blank(int ch)
 {
-	return (ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t');
+	return (ch == ' ' ||  ch == '\t');
 }
 
 // examine whether ch is semicolon or not
 int is_semi(int ch)
 {
 	return (ch == ';');
+}
+
+int is_lf(int ch)
+{
+	return (ch == '\n' || ch == '\r');
 }
 
 // get a word from FILE* fp
@@ -125,7 +130,7 @@ int get_word(FILE *fp, char *dst, int *end_semi)
 SCAN_START:
 	if (feof(fp)) return 0;
 	// skip blank
-	while (is_blank(ch)) {
+	while (is_blank(ch) || is_lf(ch)) {
 		if (feof(fp)) return 0;
 		ch = fgetc(fp);
 	}
@@ -133,7 +138,7 @@ SCAN_START:
 	if (ch == '/') {
 		ch = fgetc(fp);
 		if (ch == '/') {
-			while (ch != '\n') {
+			while (!is_lf(ch)) {
 				if (feof(fp)) return 0;
 				ch = fgetc(fp);
 			};
@@ -142,13 +147,13 @@ SCAN_START:
 	}
 	// actual read
 	while (!(is_blank(ch) || is_semi(ch))) {
-		*(dst++) = ch;
+		if(!is_lf(ch)) *(dst++) = ch;
 		if (feof(fp)) break;
 		ch = fgetc(fp);
 	}
 	*dst = 0;
 	// skip blank again
-	while (is_blank(ch) || is_semi(ch)) {
+	while (is_blank(ch) || is_semi(ch) || is_lf(ch)) {
 		if (!semi && is_semi(ch)) semi = 1;
 		if (feof(fp)) break;
 		ch = fgetc(fp);
@@ -161,7 +166,7 @@ SCAN_START:
 int skip_brace(char *src, char *dst)
 {
 	if (*(src++) != '(') return 0;
-	while (*src != ')') *(dst++) = *(src++);
+	while (*src != ')') { *(dst++) = *(src++); }
 	*dst = 0;
 	return 1;
 }
@@ -169,7 +174,7 @@ int skip_brace(char *src, char *dst)
 // examine whether ch is a hex character or not
 int is_hex_char(int ch)
 {
-	return ('0' <= ch && ch <= '9') || ('a' <= ch && ch <= 'f'); 
+	return ('0' <= ch && ch <= '9') || ('a' <= ch && ch <= 'f');
 }
 
 // get the value of the hex character
@@ -240,7 +245,7 @@ int do_param(FILE *fp, char *keyw, char* kind, char* param, int *semi)
 	return 1;
 }
 
-// output bit data 
+// output bit data
 int outBit(FT_HANDLE ftHandle, int tms, int tdi, int tdo, int mask, int flush, int *no_match, int mode)
 {
 	static int length = 0, explength[2]={0,0}, first = 1, index = 0;
@@ -305,10 +310,10 @@ int outData(FT_HANDLE ftHandle, int bitw, char *tdi, char *smask, char *tdo, cha
 		if (!outBit(ftHandle, (i == (bitw-1)) ? 1 : 0, (tdi_&1), (tdo_&1), (mask_&1), 0, no_match, mode)) {
 			return 0;
 		}
-		tdi_ >>= 1; 
-		smask_ >>= 1; 
+		tdi_ >>= 1;
+		smask_ >>= 1;
 		tdo_ >>= 1;
-		mask_ >>= 1; 
+		mask_ >>= 1;
 	}
 	return 1;
 }
@@ -338,7 +343,7 @@ int transit(FT_HANDLE ftHandle, int *current, int next, int mode)
 		*current = SELECT_DR_SCAN;
 		transit(ftHandle, current, next, mode);
 		break;
-	case SELECT_DR_SCAN: 
+	case SELECT_DR_SCAN:
 		if (next == CAPTURE_DR || next == SHIFT_DR || next == EXIT1_DR ||
 			next == PAUSE_DR || next == EXIT2_DR || next == UPDATE_DR) {
 			if (!outBit(ftHandle, 0, 0, 0, 0, 0, NULL, mode)) return 0;
@@ -404,7 +409,7 @@ int transit(FT_HANDLE ftHandle, int *current, int next, int mode)
 			transit(ftHandle, current, next, mode);
 		}
 		break;
-	case SELECT_IR_SCAN: 
+	case SELECT_IR_SCAN:
 		if (next == CAPTURE_IR || next == SHIFT_IR || next == EXIT1_IR ||
 			next == PAUSE_IR || next == EXIT2_IR || next == UPDATE_IR) {
 			if (!outBit(ftHandle, 0, 0, 0, 0, 0, NULL, mode)) return 0;
@@ -474,14 +479,26 @@ int transit(FT_HANDLE ftHandle, int *current, int next, int mode)
 	return 1;
 }
 
-// get state from state name 
+// get state from state name
 int state_of_string(char *n, int *s)
 {
 	if (!strcmp(n, "IDLE")) *s = RUN_TEST;
 	else if (!strcmp(n, "RESET")) *s = TEST_LOGIC_RESET;
 	else if (!strcmp(n, "IRPAUSE")) *s = PAUSE_IR;
 	else if (!strcmp(n, "DRPAUSE")) *s = PAUSE_DR;
- 	else return 0;
+	else if (!strcmp(n, "IREXIT1")) *s = EXIT1_IR;
+	else if (!strcmp(n, "IREXIT2")) *s = EXIT2_IR;
+	else if (!strcmp(n, "DREXIT1")) *s = EXIT1_DR;
+	else if (!strcmp(n, "DREXIT2")) *s = EXIT2_DR;
+	else if (!strcmp(n, "IRUPDATE")) *s = UPDATE_IR;
+	else if (!strcmp(n, "DRUPDATE")) *s = UPDATE_DR;
+	else if (!strcmp(n, "IRSELECT")) *s = SELECT_IR_SCAN;
+	else if (!strcmp(n, "DRSELECT")) *s = SELECT_DR_SCAN;
+	else if (!strcmp(n, "DRCAPTURE")) *s = CAPTURE_DR;
+	else {
+		fprintf(stderr, "unknown state(%s)\n", n);
+		return 0;
+	}
 	return 1;
 }
 
@@ -513,16 +530,16 @@ int parse_svf(FILE *fp, FT_HANDLE ftHandle, int v, int *current_state, int *no_m
 				mask = mask_sdr;
 				smask = smask_sdr;
 			}
-			if (!transit(ftHandle, current_state, next_state, mode)) return 0;
-			if (!get_word(fp, keyw2, &semi)) return 0;
+			if (!transit(ftHandle, current_state, next_state, mode)) return 1;
+			if (!get_word(fp, keyw2, &semi)) return 2;
 			bitw = atoi(keyw2);
 			*tdi = *tdo = 0;
 			do {
-				if (!get_word(fp, keyw2, &semi)) return 0;
-				if (!do_param(fp, keyw2, "TDI", tdi, &semi)) return 0;
-				if (!do_param(fp, keyw2, "TDO", tdo, &semi)) return 0;
-				if (!do_param(fp, keyw2, "SMASK", smask, &semi)) return 0;
-				if (!do_param(fp, keyw2, "MASK", mask, &semi)) return 0;
+				if (!get_word(fp, keyw2, &semi)) return 3;
+				if (!do_param(fp, keyw2, "TDI", tdi, &semi)) return 4;
+				if (!do_param(fp, keyw2, "TDO", tdo, &semi)) return 5;
+				if (!do_param(fp, keyw2, "SMASK", smask, &semi)) return 6;
+				if (!do_param(fp, keyw2, "MASK", mask, &semi)) return 7;
 			} while (!semi);
 			if (*tdo == 0) {
 				make_zero(bitw, tdo);
@@ -531,48 +548,55 @@ int parse_svf(FILE *fp, FT_HANDLE ftHandle, int v, int *current_state, int *no_m
 			}
 			if (v) printf("%s %d TDI %s SMASK %s TDO %s MASK %s\n", keyw, bitw, tdi, smask, tdo, mask);
 			if (!outData(ftHandle, bitw, tdi, smask, tdo, mask, no_match, mode)) {
-				return 0;
+				return 8;
 			}
 			if (!strcmp(keyw, "SIR")) {
 				*current_state = EXIT1_IR;
-				if (!transit(ftHandle, current_state, end_ir, mode)) return 0;
+				if (!transit(ftHandle, current_state, end_ir, mode)) return 9;
 			} else {
 				*current_state = EXIT1_DR;
-				if (!transit(ftHandle, current_state, end_dr, mode)) return 0;
+				if (!transit(ftHandle, current_state, end_dr, mode)) return 10;
 			}
 		} else if (!strcmp(keyw, "RUNTEST")) {
-			if (!transit(ftHandle, current_state, RUN_TEST, mode)) return 0;
-			if (!get_word(fp, keyw, &semi)) return 0;
+			if (!transit(ftHandle, current_state, RUN_TEST, mode)) return 11;
+			if (!get_word(fp, keyw, &semi)) return 12;
 			clks = atoi(keyw);
-			if (!get_word(fp, keyw, &semi)) return 0;
-			if (strcmp(keyw, "TCK")) return 0;
+			if (clks == 0) {
+				if (!get_word(fp, keyw, &semi)) return 24;
+				clks = atoi(keyw);
+			}
+			if (!get_word(fp, keyw, &semi)) return 25;
+			if (strcmp(keyw, "TCK")) {
+				fprintf(stderr, "NOT FOUND TCK(%s)\n", keyw);
+				return 26;
+			}
 			if (v) printf("RUNTEST %d TCK\n", clks); fflush(stdout);
-			for (i = 0; i < clks; i++) if (!outBit(ftHandle, 0, 0, 0, 0, 0, NULL, mode)) return 0;
+			for (i = 0; i < clks; i++) if (!outBit(ftHandle, 0, 0, 0, 0, 0, NULL, mode)) return 15;
 		} else if (!strcmp(keyw, "STATE")) {
 			if (v) printf("STATE ");
 			do {
 				int n;
-				if (!get_word(fp, keyw2, &semi)) return 0;
-				if (!state_of_string(keyw2, &n)) return 0;
-				if (!transit(ftHandle, current_state, n, mode)) return 0;
+				if (!get_word(fp, keyw2, &semi)) return 16;
+				if (!state_of_string(keyw2, &n)) return 17;
+				if (!transit(ftHandle, current_state, n, mode)) return 18;
 				if (v) printf("%s ", keyw2);
 			} while (!semi);
 			if (v) printf("\n");
 		} else if (!strcmp(keyw, "ENDIR")) {
 			int n;
-			if (!get_word(fp, keyw2, &semi)) return 0;
+			if (!get_word(fp, keyw2, &semi)) return 19;
 			if (v) printf("ENDIR %s\n", keyw2);
-			if (!state_of_string(keyw2, &n)) return 0;
+			if (!state_of_string(keyw2, &n)) return 20;
 			end_ir = n;
 		} else if (!strcmp(keyw, "ENDDR")) {
 			int n;
-			if (!get_word(fp, keyw2, &semi)) return 0;
+			if (!get_word(fp, keyw2, &semi)) return 21;
 			if (v) printf("ENDDR %s\n", keyw2);
-			if (!state_of_string(keyw2, &n)) return 0;
+			if (!state_of_string(keyw2, &n)) return 22;
 			end_dr = n;
-		} else return 0;
+		} else return 23;
 	}
-	return 1;
+	return 0;
 }
 
 int main(int argc, char* argv[])
@@ -585,6 +609,8 @@ int main(int argc, char* argv[])
 	int current_state;
 	int no_match = 0;
 	int mode = 0;
+	int error_code = 0;
+	errno_t errno;
 
 	for (i = 1 ; i < argc; i++) {
 		arg = argv[i];
@@ -603,8 +629,8 @@ int main(int argc, char* argv[])
 		fprintf(stderr, "speciry SVF file\n");
 		return 0;
 	}
-	if (!(fp = fopen(fname, "r"))) {
-		fprintf(stderr, "can't open %s\n", argv[1]);
+	if (errno = fopen_s(&fp, fname, "r")) {
+		fprintf(stderr, "can't open %s(%d)\n",  fname, errno);
 		return 0;
 	}
 	{ // dummy open...
@@ -631,18 +657,18 @@ int main(int argc, char* argv[])
 		fprintf(stderr, "can't write to USB\n");
 		goto ERROR1;
 	}
-	if (!parse_svf(fp, ftHandle, v, &current_state, &no_match, mode)) {
-		fprintf(stderr, "parse error\n");
+	if (error_code = parse_svf(fp, ftHandle, v, &current_state, &no_match, mode)) {
+		fprintf(stderr, "parse error(%d)\n", error_code);
 		goto ERROR1;
 	}
+	// flush USB
+	outBit(ftHandle, 0, 0, 0, 0, 1, &no_match, mode);
 	if (mode == 1) {
 		if (no_match > 0) printf("\n   <<< %d TDO outputs didn't match to the expected values... >>>\n\n", no_match);
 		else printf("\n   <<< All TDO outputs matched to the expected values! >>>\n\n");
 	}
-	// flush USB
-	outBit(ftHandle, 0, 0, 0, 0, 1, NULL, mode);
 ERROR1:
-	FT_Close(ftHandle);	
+	FT_Close(ftHandle);
 ERROR2:
 	fclose(fp);
 	fflush(stderr);
